@@ -9,6 +9,7 @@ using UnityEngine.EventSystems;
 using System.Threading;
 using System.Linq;
 using System.Collections.ObjectModel;
+using System.Globalization;
 
 namespace CharlesOlinerCommandConsole {
     public class CommandConsole : MonoBehaviour {
@@ -17,39 +18,41 @@ namespace CharlesOlinerCommandConsole {
          * This system allows a user to enter raw C# code into their game at runtime and have it executed.
          */
 
-        public bool fullAutocompleteLibrary; //when checked, the library is loaded with every single thing you could possibly want to type, but most of it is useless and gets in the way of the stuff you actually want. the library only updates when unloaded and reloaded.
-        public bool allowAutocomplete = true; //autocomplete takes about 3 MB if in full mode. do not change the value once Start() is called.
-        public bool unloadAutocompleteLibraryWhileClosed; //do not change while the console is closed.
+        [HideInInspector] public ConsoleOpenListener listener;
+
         static Type[] autocompleteBestTypes = new Type[] {
-                //feel free to add types to this list. their members will show up in autocomplete even when fullAutocompleteLibrary isn't checked.
-                typeof(UnityEngine.Debug),
-                typeof(GameObject),
-                typeof(MonoBehaviour),
-                typeof(CommandConsole), typeof(ConsoleCommand),
-                typeof(Physics), typeof(RaycastHit),
-                typeof(Transform),
-                typeof(Vector2),  typeof(Vector3), typeof(Vector4), typeof(Quaternion), typeof(Matrix4x4),
-                typeof(Shader), typeof(Material), typeof(Color)
-            };
-        const int maxNumAutocompleteSuggestions = 32;
+            //feel free to add types to this list. their members will show up in autocomplete even when fullAutocompleteLibrary isn't checked.
+            typeof(UnityEngine.Debug),
+            typeof(GameObject),
+            typeof(MonoBehaviour),
+            typeof(ConsoleCommand),
+            typeof(Camera),
+            typeof(Light),
+            typeof(Physics), typeof(RaycastHit), typeof(Rigidbody),
+            typeof(Physics2D), typeof(RaycastHit2D), typeof(Rigidbody2D),
+            typeof(Transform), typeof(RectTransform),
+            typeof(Vector2),  typeof(Vector3), typeof(Vector4), typeof(Quaternion), typeof(Matrix4x4),
+            typeof(Shader), typeof(Material),
+            typeof(RenderTexture), typeof(Texture2D), typeof(Texture3D),
+            typeof(Mesh), typeof(MeshRenderer), typeof(SkinnedMeshRenderer), typeof(MeshFilter),
+            typeof(Math), typeof(Mathf), typeof(UnityEngine.Random),
+            typeof(Text),
+            typeof(object)
+        };
+        const int maxNumAutocompleteSuggestions = 256; //256 is devinately more than enough
         string[] autocompleteWordsArray = null;
         string[] autocompleteSuggestions = new string[maxNumAutocompleteSuggestions];
         [HideInInspector] public RectTransform autocompleteButtonPanel;
         Text[] autocompleteButtonTexts = new Text[maxNumAutocompleteSuggestions];
         [HideInInspector] public Toggle autoCompleteToggle;
 
-        public GameObject selectedObject; //selected object
-
-        [HideInInspector] public string temporaryFilesPath; //e.g. c:\Users\Charles\Desktop\commandStuff. Can be anywhere (except for Unity-related folders, as Unity will try to import our stuff.)
-        [HideInInspector] public string pathToCscDotExeV3_5; //e.g. c:\Windows\Microsoft.NET\Framework\v3.5\csc.exe. Most computers have a copy somewhere (especially if you've installed both Unity and Visual Studio). Unity Asset Store policy prohibits me from including a copy in this package.
-
         [HideInInspector] public InputField inputField;
         [HideInInspector] public Text inputFieldExpansionText;
 
         [HideInInspector] public InputField outputField;
         [HideInInspector] public Text outputFieldExpansionText;
-        string outputFieldText = "Enter a command below.";
-        string outputFieldRichText = "Enter a command below.";
+        string outputFieldText = "Console created by Charles Oliner.";
+        string outputFieldRichText = "Console created by Charles Oliner.";
 
         [HideInInspector] public Text selectedObjectText;
 
@@ -61,6 +64,10 @@ namespace CharlesOlinerCommandConsole {
         [HideInInspector] public Toggle showEnclosingCodeToggle;
         [HideInInspector] public Toggle enterCompilesToggle;
         [HideInInspector] public Toggle showStackTracesToggle;
+
+        public Slider[] colorSliders; //RGBHSVA
+        public InputField[] colorFields; //RGBHSVA
+        public InputField colorOutput;
 
         RectTransform top; //rect of most northerly element in console
         RectTransform bottom; //rect of most southerly element in console
@@ -94,134 +101,128 @@ namespace CharlesOlinerCommandConsole {
         string title = ""; //these strings are used for indicating the progress of the dictionary generation.
         string info = "";
 
-        struct Hotkey {
-            public KeyCode key;
-            public string name;
-            public string code;
-            public string description;
-            public int cursorOffset;
+        public void pasteHexColor() {
+            string c = GUIUtility.systemCopyBuffer;
+            c = c.Replace("#", "");
+            c = c.Replace("0x", "");
+            c = c.Replace("&H", "");
+            c = c.Trim();
+            if (c.Length < 6) {
+                UnityEngine.Debug.LogWarning("Invalid hex (too short): " + c);
+                return;
+            }
 
-            public Hotkey(KeyCode key, string name, string code, int cursorOffsetFromEnd, string description) {
-                this.key = key;
-                this.name = name;
-                this.code = code;
-                this.description = description;
-                cursorOffset = code.Length + cursorOffsetFromEnd;
+            int r, g, b, a = 255;
+
+            if (!int.TryParse(c.Substring(0, 2), NumberStyles.HexNumber, null, out r)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (R-value parsing failed): " + c);
+                return;
+            }
+            if (!int.TryParse(c.Substring(2, 2), NumberStyles.HexNumber, null, out g)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (G-value parsing failed): " + c);
+                return;
+            }
+            if (!int.TryParse(c.Substring(4, 2), NumberStyles.HexNumber, null, out b)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (B-value parsing failed): " + c);
+                return;
+            }
+
+            if (c.Length >= 8)
+                int.TryParse(c.Substring(6, 2), NumberStyles.HexNumber, null, out a);
+
+            withinSliderChange = true;
+            colorSliders[0].value = r / 255f;
+            colorSliders[1].value = g / 255f;
+            colorSliders[2].value = b / 255f;
+            colorSliders[6].value = a / 255f;
+            withinSliderChange = false;
+            colorField(colorSliders[0]);
+            UnityEngine.Debug.Log("Hex pasted.");
+        }
+
+        int currentlyChangingText = -1;
+        public void colorText(InputField field) {
+            if (withinSliderChange)
+                return;
+            int index = Array.IndexOf(colorFields, field);
+            float value;
+            if(float.TryParse(field.text, out value)) {
+                currentlyChangingText = index;
+                colorSliders[index].value = value;
+                currentlyChangingText = -1;
             }
         }
 
-        public void CursorPositionResetHelper(bool selected) { //because we can't trust InputField to keep track of its caret when we deselect it.
-            if (!selected)
-                inputField.caretPosition = caret;
-            inputFieldSelected = selected;
-        }
+        bool withinSliderChange;
+        public void colorField(Slider slider) {
+            if (withinSliderChange)
+                return;
+            withinSliderChange = true;
+            Color c;
+            int index = Array.IndexOf(colorSliders, slider);
+            if (index < 3) {
+                c.r = colorSliders[0].value;
+                c.g = colorSliders[1].value;
+                c.b = colorSliders[2].value;
+                c.a = colorSliders[6].value;
 
-        public void AbortCompilation() {
-            if (compilationWaiter != null) {
-                string effectiveCsOutputPath = temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
-                File.Delete(effectiveCsOutputPath);
-                compilationWaiter.Abort();
-                compilationWaiter = null;
-                if (compilation != null) {
-                    compilation.Kill();
-                    addToOutput("\nCompilation aborted.");
-                } else {
-                    addToOutput("\nPreparation for compilation aborted.");
-                }
-                ProcessCommandEnd();
+                float hue, sat, lum;
+                Color.RGBToHSV(c, out hue, out sat, out lum);
+
+                colorSliders[3].value = hue;
+                colorSliders[4].value = sat;
+                colorSliders[5].value = lum;
+            } else if (index < 6) {
+                c = Color.HSVToRGB(colorSliders[3].value, colorSliders[4].value, colorSliders[5].value);
+                c.a = colorSliders[6].value;
+
+                colorSliders[0].value = c.r;
+                colorSliders[1].value = c.g;
+                colorSliders[2].value = c.b;
             } else {
-                addToOutput("\nNo compilation to abort!");
+                c.r = colorSliders[0].value;
+                c.g = colorSliders[1].value;
+                c.b = colorSliders[2].value;
+                c.a = colorSliders[6].value;
             }
-        }
 
-        void OnDestroy() {
-
-            //abort all threads
-            if (compilationWaiter != null)
-                compilationWaiter.Abort();
-            if (compilation != null)
-                compilation.Kill();
-            if (generateAutocompleteDictionaryThread != null)
-                generateAutocompleteDictionaryThread.Abort();
-
-            UnityEngine.Debug.Log("All console Threads/Processes successfully aborted.");
-
-            Application.logMessageReceived -= ProcessLog; //remove Debug.Log listener
-        }
-
-        public void p(Toggle t) { //called by toggles, changes their sprites to reflect whether they are checked.
-            if (t.isOn) {
-                t.GetComponent<Image>().sprite = buttonPressedSprite;
-            } else {
-                t.GetComponent<Image>().sprite = buttonSprite;
+            for (int i = 0; i < 7; i++) {
+                if (i == currentlyChangingText)
+                    continue;
+                string a = colorSliders[i].value + "";
+                if (a.Length > 4)
+                    colorFields[i].text = a.Substring(0, 4);
+                else
+                    colorFields[i].text = a;
             }
-        }
 
-        public void OnEnable() {
-            //generates the autocomplete library when the console is opened.
-            if (unloadAutocompleteLibraryWhileClosed) {
-                autocompletePrepText.transform.parent.gameObject.SetActive(true);
-                generateAutocompleteDictionaryThread = new Thread(generateAutocompleteDictionary);
-                generateAutocompleteDictionaryThread.Start();
-            }
-        }
+            float displayLum = colorSliders[5].value * colorSliders[6].value + (1- colorSliders[6].value);
+            colorOutput.textComponent.color = (displayLum > 0.5f) ? Color.black : Color.white;
 
-        void OnDisable() {
-            //drops the autocomplete library when the console is closed.
-            if (unloadAutocompleteLibraryWhileClosed) {
-                if (generateAutocompleteDictionaryThread != null)
-                    generateAutocompleteDictionaryThread.Abort();
-                autocompleteWordsArray = null;
-            }
+            colorOutput.image.color = c;
+            colorOutput.text = string.Format("hex #{0:x2}{1:x2}{2:x2}{3:x2}",
+                                    Mathf.RoundToInt(colorSliders[0].value * 255),
+                                    Mathf.RoundToInt(colorSliders[1].value * 255),
+                                    Mathf.RoundToInt(colorSliders[2].value * 255),
+                                    Mathf.RoundToInt(colorSliders[6].value * 255)) + '\n' +
+                               string.Format("new Color({0}f,{1}f,{2}f,{3}f);", colorFields[0].text, colorFields[1].text, colorFields[2].text, colorFields[6].text);
+            withinSliderChange = false;
         }
 
         void Start() {
 
-            commandHistory.Add("");
-
-            //if you want to modify this script to add more hoykeys, you can add them here. Just add this one line of code below: hotkeys.Add(new Hotkey(KeyCode.<keycode>, "Name", "//code", 0));
-            hotkeys.Add(new Hotkey(KeyCode.D, "Destroy", "Destroy(so);", -2, "Destroys an object at the end of the frame."));
-            hotkeys.Add(new Hotkey(KeyCode.E, "Members", "members();", -2, "Lists all accessible members of an object, including functions, variables, and nested classes."));
-            hotkeys.Add(new Hotkey(KeyCode.I, "Find", "so = GameObject.Find(\"\");", -3, "Finds an object from the scene."));
-            hotkeys.Add(new Hotkey(KeyCode.L, "Log", "Debug.Log(\"\");", -3, "Logs a message to this console and that of the Unity editor."));
-            hotkeys.Add(new Hotkey(KeyCode.M, "Message", "so.SendMessage(\"\");", -3, "Calls the function of the given name on a script connected to the target object."));
-            hotkeys.Add(new Hotkey(KeyCode.R, "Relocate", "relocate(so);", -2, "Moves an object to wherever your mouse is pointing and cancels its velocity, if any."));
-            hotkeys.Add(new Hotkey(KeyCode.S, "Summon", "so = summon(\"\");", -3, "Instantiates the prefab in the Resources folder with the given name wherever the mouse is pointing."));
-            hotkeys.Add(new Hotkey(KeyCode.U, "Push", "push(so);", -2, "Adds a physics force to an object."));
-
-            //instatiate buttons for hotkeys
-            int index = 0;
-            foreach (Hotkey key in hotkeys) {
-                GameObject g = Instantiate(hotkeyButtonPrefab);
-                g.transform.SetParent(hotkeyButtonPanel);
-                g.name = key.name + " Button";
-                Text t = g.transform.GetChild(0).GetComponent<Text>();
-                t.text = key.name + " <color=grey>(Ctrl+Alt+" + key.key + ")</color>";
-
-                EventTrigger trigger = g.GetComponent<EventTrigger>();
-
-                EventTrigger.Entry entry = new EventTrigger.Entry();
-                entry.eventID = EventTriggerType.PointerEnter;
-                entry.callback.AddListener((eventData) => { string f = key.description + " <color=grey>" + key.code + "</color>"; toolTipText.text = f; });
-                trigger.triggers.Add(entry);
-
-                entry = new EventTrigger.Entry();
-                entry.eventID = EventTriggerType.PointerExit;
-                entry.callback.AddListener((eventData) => { toolTipText.text = ""; });
-                trigger.triggers.Add(entry);
-
-                int j = index;
-                Button b = g.GetComponent<Button>();
-                b.onClick.AddListener((() => { int i = j; HotkeyExecute(i); }));
-
-                supressDuringCompilationButtons.Add(b);
-
-                index++;
-            }
+            AddHotkey(KeyCode.D, "Destroy", "Destroy(so);", -2, "Destroys an object from the scene at the end of the frame.");
+            AddHotkey(KeyCode.E, "Members", "members(typeof());", -3, "Lists all accessible members of a type, including functions, variables, and nested classes.");
+            AddHotkey(KeyCode.I, "Find", "so = GameObject.Find(\"\");", -3, "Finds a GameObject from the scene by name.");
+            AddHotkey(KeyCode.L, "Log", "Debug.Log(\"\");", -3, "Logs a message to the Unity console (and to this console).");
+            AddHotkey(KeyCode.M, "Message", "so.SendMessage(\"\");", -3, "Calls the method with the given name on every MonoBehaviour attatched to the target GameObject.");
+            AddHotkey(KeyCode.R, "Relocate", "relocate(so);", -2, "Moves an object to wherever your mouse is pointing and cancels its velocity, if any.");
+            AddHotkey(KeyCode.S, "Summon", "so = summon(\"\");", -3, "Instantiates the prefab in the Resources folder with the given name wherever the mouse is pointing.");
+            AddHotkey(KeyCode.U, "Push", "push(so);", -2, "Adds a 3D Physics force to an object.");
 
             //instantiate autocomplete buttons (or destroy autocomplete-related objects, if allowAutocomplete is false)
-            if (allowAutocomplete) {
-                for (int i = maxNumAutocompleteSuggestions - 1; i >= 0; i--) {
+            if (listener.allowAutocomplete) {
+                for (int i = 0; i < maxNumAutocompleteSuggestions; i++) {
                     GameObject g = Instantiate(hotkeyButtonPrefab);
                     g.transform.SetParent(autocompleteButtonPanel);
                     g.name = "Autocomplete Button " + i;
@@ -265,6 +266,8 @@ namespace CharlesOlinerCommandConsole {
                 e.callback.AddListener((eventData) => { toolTipText.text = "Autocomplete (disabled in Editor)"; });
             autoCompleteToggle.GetComponent<EventTrigger>().triggers.Add(e);
 
+            commandHistory.Add(inputField.text);
+
             Application.logMessageReceived += ProcessLog;
 
             top = outputField.GetComponent<RectTransform>();
@@ -272,11 +275,143 @@ namespace CharlesOlinerCommandConsole {
             console = GetComponent<RectTransform>();
 
             //clear dlls from last session
-            DirectoryInfo di = new DirectoryInfo(temporaryFilesPath);
-            foreach (FileInfo file in di.GetFiles()) {
-                if (file.Name.StartsWith("commandLibrary") && file.Name.EndsWith(".dll")) {
-                    file.Delete();
+            if (Directory.Exists(listener.temporaryFilesPath)) {
+                DirectoryInfo di = new DirectoryInfo(listener.temporaryFilesPath);
+                foreach (FileInfo file in di.GetFiles()) {
+                    if (file.Name.StartsWith("commandLibrary") && file.Name.EndsWith(".dll")) {
+                        file.Delete();
+                    }
                 }
+            } else {
+                UnityEngine.Debug.LogWarning("ConsoleOpenListener.temporaryFilesPath is not valid. You must change it in the Inspector or through code.");
+            }
+            if (!File.Exists(listener.pathToCscDotExeV3_5)) {
+                UnityEngine.Debug.LogWarning("ConsoleOpenListener.pathToCscDotExeV3_5 is not valid. You must change it in the Inspector or through code.");
+            }
+        }
+
+        /// <summary>
+        /// Adds an auto-type hotkey combo and a hotkey button to the auto-type hotkeys system.
+        /// </summary>
+        /// <param name="key">The final key in the key combo, after Control and Shift.</param>
+        /// <param name="name">The short name of the auto-typed code that appears on the button.</param>
+        /// <param name="code">The code to be typed automatically when the key combo is used or the button is pressed.</param>
+        /// <param name="cursorOffset">The offset from the end of the auto-typed code that the cursor should be placed at. Should be negative if you want the cursor to be within the auto-typed code, or zero if you want it at the end.</param>
+        /// <param name="desc">A description of what the code does.</param>
+        /// <example> 
+        /// This sample shows how to call the <see cref="AddHotkey"/> method.
+        ///     <code>
+        ///         AddHotkey(KeyCode.C, "Cosine", "Mathf.Cos();", -2, "Returns the cosine of the provided angle (in radians).");
+        ///     </code>
+        /// </example>
+        public void AddHotkey(KeyCode key, string name, string code, int cursorOffset, string desc) {
+            int index = hotkeys.Count;
+
+            hotkeys.Add(new Hotkey(key, name, code, cursorOffset, desc));
+
+            GameObject g = Instantiate(hotkeyButtonPrefab);
+            g.transform.SetParent(hotkeyButtonPanel);
+            g.name = name + " Button";
+            Text t = g.transform.GetChild(0).GetComponent<Text>();
+            t.text = name + " <color=grey>(Ctrl+Alt+" + key + ")</color>";
+
+            EventTrigger trigger = g.GetComponent<EventTrigger>();
+
+            EventTrigger.Entry entry = new EventTrigger.Entry();
+            entry.eventID = EventTriggerType.PointerEnter;
+            entry.callback.AddListener((eventData) => { string f = desc + " <color=grey>" + code + "</color>"; toolTipText.text = f; });
+            trigger.triggers.Add(entry);
+
+            entry = new EventTrigger.Entry();
+            entry.eventID = EventTriggerType.PointerExit;
+            entry.callback.AddListener((eventData) => { toolTipText.text = ""; });
+            trigger.triggers.Add(entry);
+
+            int j = index;
+            Button b = g.GetComponent<Button>();
+            b.onClick.AddListener((() => { int i = j; HotkeyExecute(i); }));
+
+            supressDuringCompilationButtons.Add(b);
+        }
+
+        struct Hotkey {
+            public KeyCode key;
+            public string name;
+            public string code;
+            public string description;
+            public int cursorOffset;
+
+            public Hotkey(KeyCode key, string name, string code, int cursorOffsetFromEnd, string description) {
+                this.key = key;
+                this.name = name;
+                this.code = code;
+                this.description = description;
+                cursorOffset = code.Length + cursorOffsetFromEnd;
+            }
+        }
+
+        public void CursorPositionResetHelper(bool selected) { //because we can't trust InputField to keep track of its caret when we deselect it.
+            if (!selected)
+                inputField.caretPosition = caret;
+            inputFieldSelected = selected;
+        }
+
+        public void AbortCompilation() {
+            if (compilationWaiter != null) {
+                string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+                File.Delete(effectiveCsOutputPath);
+                compilationWaiter.Abort();
+                compilationWaiter = null;
+                if (compilation != null) {
+                    compilation.Kill();
+                    addToOutput("\nCompilation aborted.");
+                } else {
+                    addToOutput("\nPreparation for compilation aborted.");
+                }
+                ProcessCommandEnd();
+            } else {
+                addToOutput("\nNo compilation to abort!");
+            }
+        }
+
+        void OnDestroy() {
+
+            //abort all threads
+            if (compilationWaiter != null)
+                compilationWaiter.Abort();
+            if (compilation != null)
+                compilation.Kill();
+            if (generateAutocompleteDictionaryThread != null)
+                generateAutocompleteDictionaryThread.Abort();
+
+            UnityEngine.Debug.Log("All console Threads/Processes successfully aborted.");
+
+            Application.logMessageReceived -= ProcessLog; //remove Debug.Log listener
+        }
+
+        public void p(Toggle t) { //called by toggles, changes their sprites to reflect whether they are checked.
+            if (t.isOn) {
+                t.GetComponent<Image>().sprite = buttonPressedSprite;
+            } else {
+                t.GetComponent<Image>().sprite = buttonSprite;
+            }
+        }
+
+        public void OnEnable() {
+            //generates the autocomplete library when the console is opened.
+            if (listener.unloadAutocompleteLibraryWhileClosed) {
+                autocompletePrepText.transform.parent.gameObject.SetActive(true);
+                generateAutocompleteDictionaryThread = new Thread(generateAutocompleteDictionary);
+                generateAutocompleteDictionaryThread.Start();
+            }
+        }
+
+        void OnDisable() {
+            //drops the autocomplete library when the console is closed.
+            if (listener.unloadAutocompleteLibraryWhileClosed) {
+                if (generateAutocompleteDictionaryThread != null)
+                    generateAutocompleteDictionaryThread.Abort();
+                autocompleteWordsArray = null;
             }
         }
 
@@ -288,10 +423,8 @@ namespace CharlesOlinerCommandConsole {
                 foreach (MemberInfo member in members) {
                     switch (member.MemberType) {
                         case MemberTypes.Constructor:
-                            ConstructorInfo c = (ConstructorInfo)member;
-                            if (c.IsPrivate) continue;
-                            break;
-                        case MemberTypes.Custom: break; //no way to check whether acessible
+                            continue; //type is already added to dictionary, and name is just (useless) ".ctor"
+                        case MemberTypes.Custom: break; //no way to check whether acessible (that I know of)
                         case MemberTypes.Event:
                             EventInfo e = (EventInfo)member;
                             if (e.GetAddMethod().IsPrivate) {
@@ -308,10 +441,7 @@ namespace CharlesOlinerCommandConsole {
                             break;
                         case MemberTypes.Method:
                             MethodInfo m = (MethodInfo)member;
-                            if (m.IsSpecialName) {
-                                if (m.Name.StartsWith("set_")) continue; //removes set accessors (which cannot be invoked directly)
-                                if (m.Name.StartsWith("get_")) continue; //removes get accessors (which cannot be invoked directly)
-                            }
+                            if (m.IsSpecialName) continue; //the name you have to type will be different than m.Name
                             if (m.IsPrivate) continue;
                             break;
                         case MemberTypes.NestedType: //can't figure out how to check this for publicness. but it might be included in Assembly.GetTypes();
@@ -334,7 +464,7 @@ namespace CharlesOlinerCommandConsole {
 
             HashSet<string> autocompleteWords = new HashSet<string>();
 
-            if (fullAutocompleteLibrary) {
+            if (listener.fullAutocompleteLibrary) {
                 //use reflection to get every assembly, type, and member in the domain and add their names to autocompleteWords
                 foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
                     Type[] types = null;
@@ -368,35 +498,39 @@ namespace CharlesOlinerCommandConsole {
         }
 
         public void Autocomplete(int i) { //actually types the suggestion into the input field.
-            if (i < maxNumAutocompleteSuggestions) {
-                string word = autocompleteSuggestions[i];
+            //if (i >= maxNumAutocompleteSuggestions)
+            //    return;
+            if (inputField.text == "")
+                return;
+            string word = autocompleteSuggestions[i];
+            if (word == null)
+                return;
 
-                for (int g = caret - 1; g >= 0; g--) {
-                    if (g > inputField.text.Length - 1) {
-                        g = inputField.text.Length - 1;
-                        if (g < 0)
-                            break;
-                    }
-                    char c = inputField.text[g];
-                    if (!char.IsLetterOrDigit(c))
+            for (int g = caret - 1; g >= 0; g--) {
+                if (g > inputField.text.Length - 1) {
+                    g = inputField.text.Length - 1;
+                    if (g < 0)
                         break;
-                    inputField.text = inputField.text.Remove(g, 1);
-                    caret--;
                 }
+                char c = inputField.text[g];
+                if (!char.IsLetterOrDigit(c))
+                    break;
+                inputField.text = inputField.text.Remove(g, 1);
+                caret--;
+            }
 
-                if (caret > inputField.text.Length)
-                    caret = inputField.text.Length;
-                else if (caret < 0)
-                    caret = 0;
+            if (caret > inputField.text.Length)
+                caret = inputField.text.Length;
+            else if (caret < 0)
+                caret = 0;
 
-                inputField.text = inputField.text.Insert(caret, word);
-                caret += word.Length;
-                inputField.caretPosition = caret;
+            inputField.text = inputField.text.Insert(caret, word);
+            caret += word.Length;
+            inputField.caretPosition = caret;
 
-                for (int q = 0; q < maxNumAutocompleteSuggestions; q++) {
-                    autocompleteButtonTexts[q].text = "";
-                    autocompleteButtonTexts[q].transform.parent.gameObject.SetActive(false);
-                }
+            for (int q = 0; q < maxNumAutocompleteSuggestions; q++) {
+                autocompleteButtonTexts[q].text = "";
+                autocompleteButtonTexts[q].transform.parent.gameObject.SetActive(false);
             }
         }
 
@@ -481,7 +615,7 @@ namespace CharlesOlinerCommandConsole {
 
         public void UpdateAutocompleteSuggestions() {
 
-            if (!allowAutocomplete)
+            if (!listener.allowAutocomplete)
                 return;
 
             if (generateAutocompleteDictionaryThread == null && autoCompleteToggle.isOn) { //autocomplete is ready
@@ -521,11 +655,17 @@ namespace CharlesOlinerCommandConsole {
                 for (int q = 0; q < maxNumAutocompleteSuggestions; q++) {
                     if (autocompleteSuggestions[q] != null) {
 
-                        if (q == 0)
-                            autocompleteButtonTexts[q].text = "<color=#008000>" + autocompleteSuggestions[q].Insert(f.Length, "</color><color=#00ff00>") + "</color>";
-                        else
-                            autocompleteButtonTexts[q].text = "<color=grey>" + autocompleteSuggestions[q].Insert(f.Length, "</color>");
-
+                        switch (q) {
+                            case 0:
+                                autocompleteButtonTexts[q].text = "<color=#008000>" + autocompleteSuggestions[q].Insert(f.Length, "</color><color=#00ff00>") + "</color>";
+                                break;
+                            case maxNumAutocompleteSuggestions - 1:
+                                autocompleteButtonTexts[q].text = "<color=#ff0080>More not shown...</color>";
+                                break;
+                            default:
+                                autocompleteButtonTexts[q].text = "<color=grey>" + autocompleteSuggestions[q].Insert(f.Length, "</color>");
+                                break;
+                        }
                         autocompleteButtonTexts[q].transform.parent.gameObject.SetActive(true);
                     } else {
                         autocompleteButtonTexts[q].text = "";
@@ -548,6 +688,7 @@ namespace CharlesOlinerCommandConsole {
                 if (!generateAutocompleteDictionaryThread.IsAlive) {
                     generateAutocompleteDictionaryThread = null;
                     autocompletePrepText.transform.parent.gameObject.SetActive(false);
+                    toolTipText.text = "";
                 }
             }
 
@@ -585,17 +726,24 @@ namespace CharlesOlinerCommandConsole {
 
             //controls height of console element to fit children for proper scrolling
             Vector3[] corners = new Vector3[4];
-            top.GetComponent<RectTransform>().GetWorldCorners(corners);
+            top.GetWorldCorners(corners);
             float topHeight = corners[2].y;
-            bottom.GetComponent<RectTransform>().GetWorldCorners(corners);
+            bottom.GetWorldCorners(corners);
             float bottomHeight = corners[0].y;
             Vector2 sd = console.sizeDelta;
             sd.y = 20 + topHeight - bottomHeight; //20 is a margin
             console.sizeDelta = sd;
 
+            //autocomplete sugegstions fill to top of screen
+            autocompleteButtonPanel.GetWorldCorners(corners);
+            bottomHeight = corners[0].y;
+            sd = autocompleteButtonPanel.sizeDelta;
+            sd.y = Screen.height - bottomHeight;
+            autocompleteButtonPanel.sizeDelta = sd;
+
             //selected object indicator
-            if (selectedObject != null)
-                selectedObjectText.text = "Use <b><color=#00ff00>so</color></b> as a variable in your commands to reference <b><color=#00ff00>" + selectedObject + "</color></b>. For example, <i>MonoBehaviour.Destroy(so);</i>.";
+            if (listener.selectedObject != null)
+                selectedObjectText.text = "Use <b><color=#00ff00>so</color></b> as a variable in your commands to reference <b><color=#00ff00>" + listener.selectedObject + "</color></b>. For example, <i>Debug.Log(so.transform.position);</i>.";
             else
                 selectedObjectText.text = "Right click an object to select it.";
 
@@ -603,9 +751,9 @@ namespace CharlesOlinerCommandConsole {
             if (Input.GetMouseButtonDown(1) && !inputField.isFocused) {
                 RaycastHit h;
                 if (Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out h)) {
-                    selectedObject = h.collider.gameObject;
+                    listener.selectedObject = h.collider.gameObject;
                 } else {
-                    selectedObject = null;
+                    listener.selectedObject = null;
                 }
             }
 
@@ -673,7 +821,7 @@ namespace CharlesOlinerCommandConsole {
                 "using System;" + '\n' +
                 "using CharlesOlinerCommandConsole;" + '\n' +
                 "public class ConsoleCommand" + numGenerated.ToString("00000000000000000000") + ": ConsoleCommand{" + '\n' +
-                    "\tpublic static object Entry(CommandConsole c) { return Command(ref c.selectedObject); }" + '\n' +
+                    "\tpublic static object Entry(CommandConsole c) { return Command(ref c.listener.selectedObject); }" + '\n' +
                     "\tpublic static object Command(ref GameObject so) {" + '\n' +
                         "\t\t";
             } else {
@@ -685,7 +833,7 @@ namespace CharlesOlinerCommandConsole {
             }
         }
         //if the enclosing code changes, these values too must be changed
-        int lineOffset = 5; //number of lines in the before part of the enclosing code
+        int lineOffset = 6; //number of lines in the before part of the enclosing code
         int columnOffset = 2; //number of characters to the left of the user command
 
         public void ProcessCommandBeginning() {
@@ -693,8 +841,29 @@ namespace CharlesOlinerCommandConsole {
             if (!inputField.interactable) //if already compiling, don't compile more
                 return;
 
+            //check for path validity
+            bool valid = true;
+            if (!Directory.Exists(listener.temporaryFilesPath)) {
+                UnityEngine.Debug.LogError("Command execution has been aborted because ConsoleOpenListener.temporaryFilesPath is not valid! You must change it in the Inspector or through code.");
+                valid = false;
+            }
+            if (!File.Exists(listener.pathToCscDotExeV3_5)) {
+                UnityEngine.Debug.LogError("Command execution has been aborted because ConsoleOpenListener.pathToCscDotExeV3_5 is not valid! You must change it in the Inspector or through code.");
+                valid = false;
+            } if (!valid)
+                return;
+
+            //make paths start with a lowercase drive letter because the syntax error thing outputs them that way
+            listener.temporaryFilesPath = listener.temporaryFilesPath.Trim();
+            char c = listener.temporaryFilesPath[0];
+            if (char.IsUpper(c)) listener.temporaryFilesPath = char.ToLower(c) + listener.temporaryFilesPath.Remove(0, 1);
+            listener.pathToCscDotExeV3_5 = listener.pathToCscDotExeV3_5.Trim();
+            c = listener.pathToCscDotExeV3_5[0];
+            if (char.IsUpper(c)) listener.pathToCscDotExeV3_5 = char.ToLower(c) + listener.pathToCscDotExeV3_5.Remove(0, 1);
+
+            //Unity is always \n, so get rid of every \r
             inputField.text = inputField.text.Trim();
-            inputField.text = inputField.text.Replace("\r", ""); //Unity is always \n
+            inputField.text = inputField.text.Replace("\r", "");
             if (inputField.text == "")
                 return;
 
@@ -717,8 +886,8 @@ namespace CharlesOlinerCommandConsole {
         }
 
         void ProcessCommandMiddle() {
-            string effectiveDllInputPath = temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
-            string effectiveCsOutputPath = temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+            string effectiveDllInputPath = listener.temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
+            string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
 
             string code = inputField.text;
 
@@ -744,7 +913,7 @@ namespace CharlesOlinerCommandConsole {
                 }
                 args += "/reference:\"" + a.CodeBase.Substring(8) + "\" "; //substring removes file:/// from the front of it
             }
-            args += "/target:library /optimize /out:\"" + effectiveDllInputPath + "\" \"" + effectiveCsOutputPath + "\"";
+            args += "/target:library /out:\"" + effectiveDllInputPath + "\" \"" + effectiveCsOutputPath + "\"";
 
             //prepare compiler process
             Process p = new Process();
@@ -752,9 +921,10 @@ namespace CharlesOlinerCommandConsole {
             p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
             p.StartInfo.CreateNoWindow = true;
             p.StartInfo.RedirectStandardOutput = true;
-            p.StartInfo.FileName = pathToCscDotExeV3_5;
+            p.StartInfo.FileName = listener.pathToCscDotExeV3_5;
             p.StartInfo.Arguments = args;
             p.Start();
+
             compilation = p;
 
             for (int i = 0; i < 4; i++) {
@@ -764,7 +934,6 @@ namespace CharlesOlinerCommandConsole {
             syntaxErrorsLines.Clear();
 
             //process sytntax errors
-            standardOutput = "";
             while (!p.StandardOutput.EndOfStream) {
 
                 string f = p.StandardOutput.ReadLine().Replace(effectiveCsOutputPath, "");
@@ -814,8 +983,8 @@ namespace CharlesOlinerCommandConsole {
         void ProcessCommandEnd() {
             compilation = null; //in case of abort
 
-            string effectiveDllInputPath = temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
-            string effectiveCsOutputPath = temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+            string effectiveDllInputPath = listener.temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
+            string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
 
             addToOutput("\n" + inputField.text, "\n<color=#00a000>" + inputField.text + "</color>");
 

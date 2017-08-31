@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -6,53 +7,23 @@ namespace CharlesOlinerCommandConsole {
     public class ConsoleCommand : MonoBehaviour {
 
         //wrapper class for commands to give them more functions.
-        //you can add more functions here if you want, but they will only show up in the auto-type list if you add it in CommandConsole.cs.
+        //you can add more functions here if you want, but they will only show up in the auto-type list if you call CommandConsole.AddHotkey().
         //(they also won't be usable if they're private and will be very difficult to use if they're not static.)
+        public static void members(Type t) {members(t, null);}
+        public static void members(Type t, string search = null) {
+            HashSet<string> autocompleteWords = new HashSet<string>();
+            CommandConsole.TypeEnumerate(ref autocompleteWords, new Type[] {t});
 
-        public static void members(Type t) {
-            foreach (MemberInfo member in t.GetMembers()) {
-                switch (member.MemberType) {
-                    case MemberTypes.Constructor:
-                        ConstructorInfo c = (ConstructorInfo)member;
-                        if (c.IsPrivate) continue;
-                        break;
-                    case MemberTypes.Custom: break; //no way to check whether acessible
-                    case MemberTypes.Event:
-                        EventInfo e = (EventInfo)member;
-                        if (e.GetAddMethod().IsPrivate) {
-                            if (!e.GetRaiseMethod().IsPrivate) {
-                                if (!e.GetRemoveMethod().IsPrivate) {
-                                    if (e.GetOtherMethods(false).Length == 0) continue;
-                                }
-                            }
-                        }
-                        break;
-                    case MemberTypes.Field:
-                        FieldInfo f = (FieldInfo)member;
-                        if (f.IsPrivate) continue;
-                        break;
-                    case MemberTypes.Method:
-                        MethodInfo m = (MethodInfo)member;
-                        if (m.IsSpecialName) {
-                            if (m.Name.StartsWith("set_")) continue; //removes set accessors (which cannot be invoked directly)
-                            if (m.Name.StartsWith("get_")) continue; //removes get accessors (which cannot be invoked directly)
-                        }
-                        if (m.IsPrivate) continue;
-                        break;
-                    case MemberTypes.NestedType: //can't figure out how to check this for publicness. but it might be included in Assembly.GetTypes();
-                        break;
-                    case MemberTypes.Property:
-                        PropertyInfo p = (PropertyInfo)member;
-                        if (p.GetAccessors(false).Length == 0) continue;
-                        break;
-                    case MemberTypes.TypeInfo: //can't figure out how to check this for publicness either. but it too might be included in Assembly.GetTypes();
-                        break;
+            if (search == null) {
+                foreach (string s in autocompleteWords) {
+                    Debug.Log(s);
                 }
-                Debug.Log(member.MemberType + " " + member.Name);
+            } else {
+                foreach (string s in autocompleteWords) {
+                    if (s.ToLower().StartsWith(search.ToLower()))
+                        Debug.Log(s);
+                }
             }
-        }
-        public static void members(object o) {
-            members(o.GetType());
         }
 
         public static GameObject summon(string resourceName) {
@@ -102,7 +73,6 @@ namespace CharlesOlinerCommandConsole {
         public static void push(GameObject pushee, float pushSpeed) {
             push(pushee, Camera.main.transform.forward * pushSpeed);
         }
-
         public static void push(GameObject pushee, Vector3 pushVec) {
             if (pushee == null) {
                 Debug.LogError("push(): Target is null.");
