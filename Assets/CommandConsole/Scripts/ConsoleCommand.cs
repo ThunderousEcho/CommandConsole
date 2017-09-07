@@ -5,6 +5,14 @@ using UnityEngine;
 
 namespace CharlesOlinerCommandConsole {
     public class ConsoleCommand : MonoBehaviour {
+        protected static GameObject so {
+            get {
+                return CommandConsole.main.listener.selectedObject;
+            }
+            set {
+                CommandConsole.main.listener.selectedObject = value;
+            }
+        }
 
         //wrapper class for commands to give them more functions.
         //you can add more functions here if you want, but they will only show up in the auto-type list if you call CommandConsole.AddHotkey().
@@ -42,10 +50,10 @@ namespace CharlesOlinerCommandConsole {
             }
             RaycastHit h;
             if (Physics.Raycast(Camera.main.ScreenPointToRay(Input.mousePosition), out h)) {
-                return GameObject.Instantiate((GameObject)o, h.point, Camera.main.transform.rotation);
+                return Instantiate((GameObject)o, h.point, Camera.main.transform.rotation);
             } else {
                 Debug.LogWarning("summon(): Mouse pointer is not over a location to summon at. Summoning at main camera.");
-                return GameObject.Instantiate((GameObject)o, Camera.main.transform.position, Camera.main.transform.rotation);
+                return Instantiate((GameObject)o, Camera.main.transform.position, Camera.main.transform.rotation);
             }
         }
 

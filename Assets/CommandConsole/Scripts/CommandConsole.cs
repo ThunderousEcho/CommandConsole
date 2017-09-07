@@ -8,7 +8,6 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using System.Threading;
 using System.Linq;
-using System.Collections.ObjectModel;
 using System.Globalization;
 
 namespace CharlesOlinerCommandConsole {
@@ -17,12 +16,12 @@ namespace CharlesOlinerCommandConsole {
         /* COMMAND CONSOLE
          * This system allows a user to enter raw C# code into their game at runtime and have it executed.
          */
-
         [HideInInspector] public ConsoleOpenListener listener;
 
         static Type[] autocompleteBestTypes = new Type[] {
             //feel free to add types to this list. their members will show up in autocomplete even when fullAutocompleteLibrary isn't checked.
             typeof(UnityEngine.Debug),
+            typeof(Application),
             typeof(GameObject),
             typeof(MonoBehaviour),
             typeof(ConsoleCommand),
@@ -45,6 +44,7 @@ namespace CharlesOlinerCommandConsole {
         [HideInInspector] public RectTransform autocompleteButtonPanel;
         Text[] autocompleteButtonTexts = new Text[maxNumAutocompleteSuggestions];
         [HideInInspector] public Toggle autoCompleteToggle;
+        [HideInInspector] public Toggle languageToggle;
 
         [HideInInspector] public InputField inputField;
         [HideInInspector] public Text inputFieldExpansionText;
@@ -58,16 +58,18 @@ namespace CharlesOlinerCommandConsole {
 
         [HideInInspector] public Text toolTipExpansionText; //"expansion texts" are used to make a panel containing text fit the size of the text.
         [HideInInspector] public Text toolTipText;
+        [HideInInspector] public Image toolTipPanel;
 
         [HideInInspector] public Text autocompletePrepText;
 
         [HideInInspector] public Toggle showEnclosingCodeToggle;
         [HideInInspector] public Toggle enterCompilesToggle;
         [HideInInspector] public Toggle showStackTracesToggle;
+        [HideInInspector] public Button abortButton;
 
-        public Slider[] colorSliders; //RGBHSVA
-        public InputField[] colorFields; //RGBHSVA
-        public InputField colorOutput;
+        [HideInInspector] public Slider[] colorSliders; //RGBHSVA
+        [HideInInspector] public InputField[] colorFields; //RGBHSVA
+        [HideInInspector] public InputField colorOutput;
 
         RectTransform top; //rect of most northerly element in console
         RectTransform bottom; //rect of most southerly element in console
@@ -101,115 +103,20 @@ namespace CharlesOlinerCommandConsole {
         string title = ""; //these strings are used for indicating the progress of the dictionary generation.
         string info = "";
 
-        public void pasteHexColor() {
-            string c = GUIUtility.systemCopyBuffer;
-            c = c.Replace("#", "");
-            c = c.Replace("0x", "");
-            c = c.Replace("&H", "");
-            c = c.Trim();
-            if (c.Length < 6) {
-                UnityEngine.Debug.LogWarning("Invalid hex (too short): " + c);
-                return;
+        public static CommandConsole main;
+
+        public class ReferenceLoader : MarshalByRefObject {
+            public Assembly LoadReferences(string assemblyPath) {
+                var assembly = Assembly.ReflectionOnlyLoadFrom(assemblyPath);
+                return assembly;
             }
-
-            int r, g, b, a = 255;
-
-            if (!int.TryParse(c.Substring(0, 2), NumberStyles.HexNumber, null, out r)) {
-                UnityEngine.Debug.LogWarning("Invalid hex (R-value parsing failed): " + c);
-                return;
-            }
-            if (!int.TryParse(c.Substring(2, 2), NumberStyles.HexNumber, null, out g)) {
-                UnityEngine.Debug.LogWarning("Invalid hex (G-value parsing failed): " + c);
-                return;
-            }
-            if (!int.TryParse(c.Substring(4, 2), NumberStyles.HexNumber, null, out b)) {
-                UnityEngine.Debug.LogWarning("Invalid hex (B-value parsing failed): " + c);
-                return;
-            }
-
-            if (c.Length >= 8)
-                int.TryParse(c.Substring(6, 2), NumberStyles.HexNumber, null, out a);
-
-            withinSliderChange = true;
-            colorSliders[0].value = r / 255f;
-            colorSliders[1].value = g / 255f;
-            colorSliders[2].value = b / 255f;
-            colorSliders[6].value = a / 255f;
-            withinSliderChange = false;
-            colorField(colorSliders[0]);
-            UnityEngine.Debug.Log("Hex pasted.");
-        }
-
-        int currentlyChangingText = -1;
-        public void colorText(InputField field) {
-            if (withinSliderChange)
-                return;
-            int index = Array.IndexOf(colorFields, field);
-            float value;
-            if(float.TryParse(field.text, out value)) {
-                currentlyChangingText = index;
-                colorSliders[index].value = value;
-                currentlyChangingText = -1;
-            }
-        }
-
-        bool withinSliderChange;
-        public void colorField(Slider slider) {
-            if (withinSliderChange)
-                return;
-            withinSliderChange = true;
-            Color c;
-            int index = Array.IndexOf(colorSliders, slider);
-            if (index < 3) {
-                c.r = colorSliders[0].value;
-                c.g = colorSliders[1].value;
-                c.b = colorSliders[2].value;
-                c.a = colorSliders[6].value;
-
-                float hue, sat, lum;
-                Color.RGBToHSV(c, out hue, out sat, out lum);
-
-                colorSliders[3].value = hue;
-                colorSliders[4].value = sat;
-                colorSliders[5].value = lum;
-            } else if (index < 6) {
-                c = Color.HSVToRGB(colorSliders[3].value, colorSliders[4].value, colorSliders[5].value);
-                c.a = colorSliders[6].value;
-
-                colorSliders[0].value = c.r;
-                colorSliders[1].value = c.g;
-                colorSliders[2].value = c.b;
-            } else {
-                c.r = colorSliders[0].value;
-                c.g = colorSliders[1].value;
-                c.b = colorSliders[2].value;
-                c.a = colorSliders[6].value;
-            }
-
-            for (int i = 0; i < 7; i++) {
-                if (i == currentlyChangingText)
-                    continue;
-                string a = colorSliders[i].value + "";
-                if (a.Length > 4)
-                    colorFields[i].text = a.Substring(0, 4);
-                else
-                    colorFields[i].text = a;
-            }
-
-            float displayLum = colorSliders[5].value * colorSliders[6].value + (1- colorSliders[6].value);
-            colorOutput.textComponent.color = (displayLum > 0.5f) ? Color.black : Color.white;
-
-            colorOutput.image.color = c;
-            colorOutput.text = string.Format("hex #{0:x2}{1:x2}{2:x2}{3:x2}",
-                                    Mathf.RoundToInt(colorSliders[0].value * 255),
-                                    Mathf.RoundToInt(colorSliders[1].value * 255),
-                                    Mathf.RoundToInt(colorSliders[2].value * 255),
-                                    Mathf.RoundToInt(colorSliders[6].value * 255)) + '\n' +
-                               string.Format("new Color({0}f,{1}f,{2}f,{3}f);", colorFields[0].text, colorFields[1].text, colorFields[2].text, colorFields[6].text);
-            withinSliderChange = false;
         }
 
         void Start() {
+
+            Application.logMessageReceived += ProcessLog;
+
+            main = this;
 
             AddHotkey(KeyCode.D, "Destroy", "Destroy(so);", -2, "Destroys an object from the scene at the end of the frame.");
             AddHotkey(KeyCode.E, "Members", "members(typeof());", -3, "Lists all accessible members of a type, including functions, variables, and nested classes.");
@@ -268,26 +175,133 @@ namespace CharlesOlinerCommandConsole {
 
             commandHistory.Add(inputField.text);
 
-            Application.logMessageReceived += ProcessLog;
-
             top = outputField.GetComponent<RectTransform>();
             bottom = inputField.GetComponent<RectTransform>();
             console = GetComponent<RectTransform>();
 
             //clear dlls from last session
-            if (Directory.Exists(listener.temporaryFilesPath)) {
-                DirectoryInfo di = new DirectoryInfo(listener.temporaryFilesPath);
-                foreach (FileInfo file in di.GetFiles()) {
-                    if (file.Name.StartsWith("commandLibrary") && file.Name.EndsWith(".dll")) {
-                        file.Delete();
-                    }
+            DirectoryInfo di = new DirectoryInfo(Directory.GetCurrentDirectory());
+            foreach (FileInfo file in di.GetFiles()) {
+                if (file.Name.StartsWith("commandLibrary") && file.Name.EndsWith(".dll")) {
+                    file.Delete();
                 }
+            }
+            if (!File.Exists("csc.exe")) {
+                UnityEngine.Debug.LogWarning("csc.exe (version 3.5) is missing from the program's root directory! See the Options/Setup tab on the central bar to acquire this file.");
+                languageToggle.isOn = false;
+            }
+            if (!File.Exists("cscompui.dll")) {
+                UnityEngine.Debug.LogWarning("cscompui.dll (version 3.5) is missing from the program's root directory! See the Options/Setup tab on the central bar to acquire this file.");
+                languageToggle.isOn = false;
+            }
+        }
+
+        public void pasteHexColor() {
+            string c = GUIUtility.systemCopyBuffer;
+            c = c.Replace("#", "");
+            c = c.Replace("0x", "");
+            c = c.Replace("&H", "");
+            c = c.Trim();
+            if (c.Length < 6) {
+                UnityEngine.Debug.LogWarning("Invalid hex (too short): " + c);
+                return;
+            }
+
+            int r, g, b, a = 255;
+
+            if (!int.TryParse(c.Substring(0, 2), NumberStyles.HexNumber, null, out r)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (R-value parsing failed): " + c);
+                return;
+            }
+            if (!int.TryParse(c.Substring(2, 2), NumberStyles.HexNumber, null, out g)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (G-value parsing failed): " + c);
+                return;
+            }
+            if (!int.TryParse(c.Substring(4, 2), NumberStyles.HexNumber, null, out b)) {
+                UnityEngine.Debug.LogWarning("Invalid hex (B-value parsing failed): " + c);
+                return;
+            }
+
+            if (c.Length >= 8)
+                int.TryParse(c.Substring(6, 2), NumberStyles.HexNumber, null, out a);
+
+            withinSliderChange = true;
+            colorSliders[0].value = r / 255f;
+            colorSliders[1].value = g / 255f;
+            colorSliders[2].value = b / 255f;
+            colorSliders[6].value = a / 255f;
+            withinSliderChange = false;
+            colorField(colorSliders[0]);
+            UnityEngine.Debug.Log("Hex pasted.");
+        }
+
+        int currentlyChangingText = -1;
+        public void colorText(InputField field) {
+            if (withinSliderChange)
+                return;
+            int index = Array.IndexOf(colorFields, field);
+            float value;
+            if (float.TryParse(field.text, out value)) {
+                currentlyChangingText = index;
+                colorSliders[index].value = value;
+                currentlyChangingText = -1;
+            }
+        }
+
+        bool withinSliderChange;
+        public void colorField(Slider slider) {
+            if (withinSliderChange)
+                return;
+            withinSliderChange = true;
+            Color c;
+            int index = Array.IndexOf(colorSliders, slider);
+            if (index < 3) {
+                c.r = colorSliders[0].value;
+                c.g = colorSliders[1].value;
+                c.b = colorSliders[2].value;
+                c.a = colorSliders[6].value;
+
+                float hue, sat, lum;
+                Color.RGBToHSV(c, out hue, out sat, out lum);
+
+                colorSliders[3].value = hue;
+                colorSliders[4].value = sat;
+                colorSliders[5].value = lum;
+            } else if (index < 6) {
+                c = Color.HSVToRGB(colorSliders[3].value, colorSliders[4].value, colorSliders[5].value);
+                c.a = colorSliders[6].value;
+
+                colorSliders[0].value = c.r;
+                colorSliders[1].value = c.g;
+                colorSliders[2].value = c.b;
             } else {
-                UnityEngine.Debug.LogWarning("ConsoleOpenListener.temporaryFilesPath is not valid. You must change it in the Inspector or through code.");
+                c.r = colorSliders[0].value;
+                c.g = colorSliders[1].value;
+                c.b = colorSliders[2].value;
+                c.a = colorSliders[6].value;
             }
-            if (!File.Exists(listener.pathToCscDotExeV3_5)) {
-                UnityEngine.Debug.LogWarning("ConsoleOpenListener.pathToCscDotExeV3_5 is not valid. You must change it in the Inspector or through code.");
+
+            for (int i = 0; i < 7; i++) {
+                if (i == currentlyChangingText)
+                    continue;
+                string a = colorSliders[i].value + "";
+                if (a.Length > 5)
+                    colorFields[i].text = a.Substring(0, 5);
+                else
+                    colorFields[i].text = a;
             }
+
+            float displayLum = colorSliders[5].value * colorSliders[6].value + (1 - colorSliders[6].value);
+            colorOutput.textComponent.color = (displayLum > 0.5f) ? Color.black : Color.white;
+
+            colorOutput.image.color = c;
+            colorOutput.text = string.Format("hex #{0:x2}{1:x2}{2:x2}{3:x2}",
+                                    Mathf.RoundToInt(colorSliders[0].value * 255),
+                                    Mathf.RoundToInt(colorSliders[1].value * 255),
+                                    Mathf.RoundToInt(colorSliders[2].value * 255),
+                                    Mathf.RoundToInt(colorSliders[6].value * 255)) + '\n' +
+                               string.Format("new Color({0}f,{1}f,{2}f,{3}f);", colorFields[0].text, colorFields[1].text, colorFields[2].text, colorFields[6].text);
+            withinSliderChange = false;
         }
 
         /// <summary>
@@ -358,7 +372,7 @@ namespace CharlesOlinerCommandConsole {
 
         public void AbortCompilation() {
             if (compilationWaiter != null) {
-                string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+                string effectiveCsOutputPath = "commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
                 File.Delete(effectiveCsOutputPath);
                 compilationWaiter.Abort();
                 compilationWaiter = null;
@@ -376,7 +390,6 @@ namespace CharlesOlinerCommandConsole {
 
         void OnDestroy() {
 
-            //abort all threads
             if (compilationWaiter != null)
                 compilationWaiter.Abort();
             if (compilation != null)
@@ -384,7 +397,7 @@ namespace CharlesOlinerCommandConsole {
             if (generateAutocompleteDictionaryThread != null)
                 generateAutocompleteDictionaryThread.Abort();
 
-            UnityEngine.Debug.Log("All console Threads/Processes successfully aborted.");
+            UnityEngine.Debug.Log("Console threads and processes aborted. Removing log processor and exiting...");
 
             Application.logMessageReceived -= ProcessLog; //remove Debug.Log listener
         }
@@ -537,6 +550,7 @@ namespace CharlesOlinerCommandConsole {
         public void Clear() { //clears the console.
             outputFieldExpansionText.text = outputFieldRichText = "Console cleared.";
             outputField.text = outputFieldText = "Console cleared.";
+            syntaxErrorsLines.Clear();
         }
 
         void ProcessLog(string logString, string stackTrace, LogType type) {
@@ -682,6 +696,23 @@ namespace CharlesOlinerCommandConsole {
 
         public void Update() {
 
+            //tooltip fade-in
+            Color c = toolTipText.color;
+            Color cP = toolTipPanel.color;
+            if (toolTipExpansionText.gameObject.activeSelf) {
+                c.a += Time.deltaTime * 5;
+                cP.a += Time.deltaTime * 5;
+
+                bool k = toolTipExpansionText.supportRichText;
+                if (k != c.a > 0)
+                    toolTipExpansionText.supportRichText = toolTipText.supportRichText = !k; //rich text can override opacity.
+            } else {
+                c.a = -2.5f;
+                cP.a = -2.5f;
+            }
+            toolTipText.color = c;
+            toolTipPanel.color = cP;
+
             //displays the status of the autocomplete library generation and helps transition out of it when it ends.
             if (generateAutocompleteDictionaryThread != null) {
                 autocompletePrepText.text = title + "\n" + info;
@@ -742,10 +773,18 @@ namespace CharlesOlinerCommandConsole {
             autocompleteButtonPanel.sizeDelta = sd;
 
             //selected object indicator
+            string wantedText = "";
             if (listener.selectedObject != null)
-                selectedObjectText.text = "Use <b><color=#00ff00>so</color></b> as a variable in your commands to reference <b><color=#00ff00>" + listener.selectedObject + "</color></b>. For example, <i>Debug.Log(so.transform.position);</i>.";
+                wantedText = "Use <b><color=#00ff00>so</color></b> as a variable in your commands to reference <b><color=#00ff00>" + listener.selectedObject + "</color></b>. For example, <i>Debug.Log(so.transform.position);</i>.";
             else
-                selectedObjectText.text = "Right click an object to select it.";
+                wantedText = "Right click an object to select it.";
+            if (selectedObjectText.text != wantedText)
+                selectedObjectText.text = wantedText;
+
+            //placeholder text
+            string wantedPlaceholderText = languageToggle.isOn ? "Enter a command here. (C# Commands should be in the form of raw C# code.)" : "Enter a command here. (UnityScript commands should be in the form of raw UnityScript code.)";
+            if (((Text)inputField.placeholder).text != wantedPlaceholderText)
+                ((Text)inputField.placeholder).text = wantedPlaceholderText;
 
             //object selector
             if (Input.GetMouseButtonDown(1) && !inputField.isFocused) {
@@ -815,51 +854,46 @@ namespace CharlesOlinerCommandConsole {
         }
 
         public string generateEnclosingCode(bool before) {//this code is placed before and after the user-inputted command to appease the compiler gods.
-            if (before) {
-                return
-                "using UnityEngine;" + '\n' +
-                "using System;" + '\n' +
-                "using CharlesOlinerCommandConsole;" + '\n' +
-                "public class ConsoleCommand" + numGenerated.ToString("00000000000000000000") + ": ConsoleCommand{" + '\n' +
-                    "\tpublic static object Entry(CommandConsole c) { return Command(ref c.listener.selectedObject); }" + '\n' +
-                    "\tpublic static object Command(ref GameObject so) {" + '\n' +
-                        "\t\t";
+            if (languageToggle.isOn) {
+                if (before) {
+                    return
+                    "using UnityEngine;" + '\n' +
+                    "using System;" + '\n' +
+                    "using CharlesOlinerCommandConsole;" + '\n' +
+                    "public class ConsoleCommand" + numGenerated.ToString("00000000000000000000") + ": ConsoleCommand{" + '\n' +
+                        "\tpublic static object Command() {" + '\n' +
+                            "\t\t";
+                } else {
+                    return
+                                                 '\n' +
+                            "\t\treturn \"\";" + '\n' +
+                        "\t}" + '\n' +
+                    "}";
+                }
             } else {
-                return
-                                             '\n' +
-                        "\t\treturn \"\";" + '\n' +
-                    "\t}" + '\n' +
-                "}";
+                if (before) {
+                    return
+                    "var so: GameObject = EvaluatorHelper.selectedObject;" + '\n';
+                } else {
+                    return "";
+                }
             }
         }
         //if the enclosing code changes, these values too must be changed
-        int lineOffset = 6; //number of lines in the before part of the enclosing code
+        int lineOffset = 5; //number of lines in the before part of the enclosing code
         int columnOffset = 2; //number of characters to the left of the user command
+
+        public void setSelectedObject(GameObject so) {
+            listener.selectedObject = so;
+        }
+        public void setSelectedObjectNull() {
+            listener.selectedObject = null;
+        }
 
         public void ProcessCommandBeginning() {
 
             if (!inputField.interactable) //if already compiling, don't compile more
                 return;
-
-            //check for path validity
-            bool valid = true;
-            if (!Directory.Exists(listener.temporaryFilesPath)) {
-                UnityEngine.Debug.LogError("Command execution has been aborted because ConsoleOpenListener.temporaryFilesPath is not valid! You must change it in the Inspector or through code.");
-                valid = false;
-            }
-            if (!File.Exists(listener.pathToCscDotExeV3_5)) {
-                UnityEngine.Debug.LogError("Command execution has been aborted because ConsoleOpenListener.pathToCscDotExeV3_5 is not valid! You must change it in the Inspector or through code.");
-                valid = false;
-            } if (!valid)
-                return;
-
-            //make paths start with a lowercase drive letter because the syntax error thing outputs them that way
-            listener.temporaryFilesPath = listener.temporaryFilesPath.Trim();
-            char c = listener.temporaryFilesPath[0];
-            if (char.IsUpper(c)) listener.temporaryFilesPath = char.ToLower(c) + listener.temporaryFilesPath.Remove(0, 1);
-            listener.pathToCscDotExeV3_5 = listener.pathToCscDotExeV3_5.Trim();
-            c = listener.pathToCscDotExeV3_5[0];
-            if (char.IsUpper(c)) listener.pathToCscDotExeV3_5 = char.ToLower(c) + listener.pathToCscDotExeV3_5.Remove(0, 1);
 
             //Unity is always \n, so get rid of every \r
             inputField.text = inputField.text.Trim();
@@ -872,6 +906,29 @@ namespace CharlesOlinerCommandConsole {
             commandHistory.Add("");
             historyIndex = commandHistory.Count - 1;
 
+            if (languageToggle.isOn) {
+                //check for required files
+                if (!File.Exists("csc.exe")) {
+                    UnityEngine.Debug.LogWarning("csc.exe (version 3.5) is missing from the program's root directory! See the Options/Setup tab on the central bar to acquire this file.");
+                    languageToggle.isOn = false;
+                }
+                if (!File.Exists("cscompui.dll")) {
+                    UnityEngine.Debug.LogWarning("cscompui.dll (version 3.5) is missing from the program's root directory! See the Options/Setup tab on the central bar to acquire this file.");
+                    languageToggle.isOn = false;
+                }
+            }
+
+            if (!languageToggle.isOn) { //use unityscript instead
+                addToOutput("\n" + inputField.text, "\n<color=#00a000>" + inputField.text + "</color>");
+                if (listener.selectedObject != null)
+                    gameObject.SendMessage("setSelected", listener.selectedObject);
+                else
+                    gameObject.SendMessage("setSelectedNull");
+                string code = showEnclosingCodeToggle.isOn ? inputField.text : generateEnclosingCode(true) + inputField.text + generateEnclosingCode(false);
+                gameObject.SendMessage("evaluate", code);
+                return;
+            }
+
             //make buttons that would otherwise break the system non-interactible.
             inputField.interactable = false;
             foreach (Button b in supressDuringCompilationButtons) {
@@ -879,15 +936,34 @@ namespace CharlesOlinerCommandConsole {
             }
             showEnclosingCodeToggle.interactable = false;
             showEnclosingCodeToggle.GetComponent<Image>().sprite = buttonDisabledSprite;
+            languageToggle.interactable = false;
 
             //start next part of compilation
             compilationWaiter = new Thread(ProcessCommandMiddle);
             compilationWaiter.Start();
         }
 
+        void ProcessCommandMiddleUnityScript(object retValue) {
+
+            if (showEnclosingCodeToggle.isOn)
+                inputField.text = generateEnclosingCode(true) + generateEnclosingCode(false);
+            else
+                inputField.text = "";
+
+            if (retValue != null) {
+                addToOutput("\n" + retValue.ToString(), "\n<color=#00ff00>" + retValue.ToString() + "</color>");
+            } else {
+                addToOutput("\nnull", "\n<color=#00ff00>null</color>");
+            }
+        }
+        void ProcessCommandMiddleUnityScriptNull() {
+            ProcessCommandMiddleUnityScript(null);
+        }
+
         void ProcessCommandMiddle() {
-            string effectiveDllInputPath = listener.temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
-            string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+
+            string effectiveDllInputPath = "commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
+            string effectiveCsOutputPath = "commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
 
             string code = inputField.text;
 
@@ -911,9 +987,12 @@ namespace CharlesOlinerCommandConsole {
                     case "mscorlib": continue;
                     case "UnityEditor.Purchasing": continue; //this one isn't a default include, but it might be a security issue to allow commands to use it.
                 }
-                args += "/reference:\"" + a.CodeBase.Substring(8) + "\" "; //substring removes file:/// from the front of it
+                string codebase = a.CodeBase;
+                if (a.CodeBase.StartsWith("file:///"))
+                    codebase = codebase.Substring(8);
+                args += listener.argumentPrefix + "reference:\"" + codebase + "\" ";
             }
-            args += "/target:library /out:\"" + effectiveDllInputPath + "\" \"" + effectiveCsOutputPath + "\"";
+            args += string.Format("{0}target:library {0}nologo {0}out:\"" + effectiveDllInputPath + "\" \"" + effectiveCsOutputPath + "\"", listener.argumentPrefix);
 
             //prepare compiler process
             Process p = new Process();
@@ -921,25 +1000,25 @@ namespace CharlesOlinerCommandConsole {
             p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
             p.StartInfo.CreateNoWindow = true;
             p.StartInfo.RedirectStandardOutput = true;
-            p.StartInfo.FileName = listener.pathToCscDotExeV3_5;
+            p.StartInfo.FileName = "csc.exe";
             p.StartInfo.Arguments = args;
             p.Start();
-
             compilation = p;
 
-            for (int i = 0; i < 4; i++) {
-                p.StandardOutput.ReadLine(); //get rid of first 4 lines of output (version numbers and stuff)
-            }
-
+            standardOutput = "";
             syntaxErrorsLines.Clear();
 
             //process sytntax errors
             while (!p.StandardOutput.EndOfStream) {
+                string read = p.StandardOutput.ReadLine();
+                if (showEnclosingCodeToggle.isOn)
+                    standardOutput += "\n" + read;
 
-                string f = p.StandardOutput.ReadLine().Replace(effectiveCsOutputPath, "");
+                string f = read.Replace(effectiveCsOutputPath, "");
 
                 if (!f.StartsWith("(")) {
-                    standardOutput += "\n" + f;
+                    if (!showEnclosingCodeToggle.isOn)
+                        standardOutput += "\n" + f;
                     continue;
                 }
 
@@ -949,14 +1028,11 @@ namespace CharlesOlinerCommandConsole {
                 int column = 0;
                 int sLength = 0;
 
-                try {
-                    string s = f.Substring(0, f.IndexOf(')'));
-                    string[] n = s.Split(',');
-                    sLength = s.Length + 1;
+                string s = f.Substring(0, f.IndexOf(')'));
+                string[] n = s.Split(',');
+                sLength = s.Length + 1;
 
-                    line = int.Parse(n[0]);
-                    column = int.Parse(n[1]);
-                } catch (Exception) {
+                if (!int.TryParse(n[0], out line) || !int.TryParse(n[1], out column)) {
                     standardOutput += "\n(" + f;
                     continue;
                 }
@@ -969,10 +1045,11 @@ namespace CharlesOlinerCommandConsole {
 
                 f = f.Substring(sLength, f.Length - sLength);
 
-                if (line > 0)
+                if (line >= 0)
                     syntaxErrorsLines.Add((uint)line);
 
-                standardOutput += "\nSyntax error at Line " + line + ", Column " + column + f;
+                if (!showEnclosingCodeToggle.isOn)
+                    standardOutput += "\nSyntax error at Line " + line + ", Column " + column + f;
             }
             standardOutput += p.StandardOutput.ReadToEnd();
 
@@ -983,15 +1060,18 @@ namespace CharlesOlinerCommandConsole {
         void ProcessCommandEnd() {
             compilation = null; //in case of abort
 
-            string effectiveDllInputPath = listener.temporaryFilesPath + "\\commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
-            string effectiveCsOutputPath = listener.temporaryFilesPath + "\\commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
+            string effectiveDllInputPath = "commandLibrary" + numGenerated.ToString("00000000000000000000") + ".dll";
+            string effectiveCsOutputPath = "commandScript" + numGenerated.ToString("00000000000000000000") + ".cs";
 
             addToOutput("\n" + inputField.text, "\n<color=#00a000>" + inputField.text + "</color>");
 
             File.Delete(effectiveCsOutputPath); //don't need it anymore, it would just be taking up space otherwise.
             if (!File.Exists(effectiveDllInputPath)) {
                 //output syntax errors
-                addToOutput("\n" + standardOutput.Trim(), "\n<color=#ff00a0>" + standardOutput.Trim() + "</color>");
+                if (standardOutput != null) {
+                    standardOutput = standardOutput.Trim();
+                    addToOutput("\n" + standardOutput, "\n<color=#ff00a0>" + standardOutput + "</color>");
+                }
                 numGenerated++;
             } else {
                 //load back compiled code
@@ -1000,10 +1080,10 @@ namespace CharlesOlinerCommandConsole {
                 foreach (Type type in types) {
                     MethodInfo[] methods = type.GetMethods();
                     foreach (MethodInfo method in methods) {
-                        if (method.IsStatic && method.Name == "Entry") {
+                        if (method.IsStatic && method.Name == "Command") {
                             object o = null;
                             try {
-                                o = method.Invoke(null, new object[] { this });
+                                o = method.Invoke(null, null);
                             } catch (Exception e) {
                                 UnityEngine.Debug.LogException(e);
                             }
@@ -1030,12 +1110,13 @@ namespace CharlesOlinerCommandConsole {
                 b.interactable = true;
             }
             showEnclosingCodeToggle.interactable = true;
+            languageToggle.interactable = true;
             p(showEnclosingCodeToggle);
 
             UpdateInputText();
         }
 
-        void addToOutput(string msg, string richMsg = null) { //logs a message to the outputfield.
+        public void addToOutput(string msg, string richMsg = null) { //logs a message to the outputfield.
 
             //two strings are required because inputfields don't support rich text.
             //this system layers a rich textbox over an invisible inputfield textbox.
